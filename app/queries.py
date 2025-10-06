@@ -1,6 +1,5 @@
 from typing import Any, Dict, List, Optional, Tuple
 
-
 class QueryDef:
     def __init__(
         self,
@@ -25,93 +24,116 @@ class QueryDef:
             "description": self.description,
         }
 
-
 QUERIES: List[QueryDef] = [
+    # All students
     QueryDef(
         key="all_students",
         title="All Students",
         sql="""
-            SELECT s.id, s.first_name, s.last_name, s.email, s.age,
-                   GROUP_CONCAT(c.name ORDER BY c.name SEPARATOR ', ') AS courses
-            FROM students s
-            LEFT JOIN enrollments e ON e.student_id = s.id
-            LEFT JOIN courses c ON c.id = e.course_id
-            GROUP BY s.id, s.first_name, s.last_name, s.email, s.age
-            ORDER BY s.last_name, s.first_name
+            SELECT id, first_name, last_name, email, age
+            FROM students
+            ORDER BY last_name, first_name
         """.strip(),
-        description="List all registered students along with their enrolled courses.",
+        description="List all registered students (basic select).",
     ),
+    # Student profile
     QueryDef(
-        key="student_details",
-        title="Student Details: Courses, Attendance, Results",
+        key="student_profile",
+        title="Student Profile",
         sql="""
-            SELECT s.id AS student_id,
-                   CONCAT(s.first_name, ' ', s.last_name) AS student_name,
-                   c.id AS course_id,
-                   c.name AS course_name,
-                   COALESCE(att.present_days, 0) AS present_days,
-                   COALESCE(att.total_days, 0) AS total_days,
-                   COALESCE(r.marks, 0) AS marks,
-                   r.grade
-            FROM students s
-            LEFT JOIN enrollments e ON e.student_id = s.id
-            LEFT JOIN courses c ON c.id = e.course_id
-            LEFT JOIN attendance att ON att.student_id = s.id AND att.course_id = c.id
-            LEFT JOIN results r ON r.student_id = s.id AND r.course_id = c.id
-            WHERE s.id = %(student_id)s
-            ORDER BY c.name
+            SELECT id, first_name, last_name, email, age
+            FROM students
+            WHERE id = %(student_id)s
         """.strip(),
         params=[("student_id", "int")],
-        description="Detailed view for a single student including courses, attendance, and results.",
+        description="View a single student's profile.",
     ),
-    QueryDef(
-        key="avg_age_per_course",
-        title="Average Student Age per Course",
-        sql="""
-            SELECT c.id AS course_id,
-                   c.name AS course_name,
-                   AVG(s.age) AS average_age,
-                   COUNT(*) AS total_students
-            FROM courses c
-            JOIN enrollments e ON e.course_id = c.id
-            JOIN students s ON s.id = e.student_id
-            GROUP BY c.id, c.name
-            ORDER BY c.name
-        """.strip(),
-        description="Analytics: average age and total students per course.",
-    ),
-    QueryDef(
-        key="students_by_course",
-        title="Students by Course",
-        sql="""
-            SELECT s.id, s.first_name, s.last_name, s.email
-            FROM students s
-            JOIN enrollments e ON e.student_id = s.id
-            WHERE e.course_id = %(course_id)s
-            ORDER BY s.last_name, s.first_name
-        """.strip(),
-        params=[("course_id", "int")],
-        description="List students enrolled in a given course.",
-    ),
+    # Courses a student is enrolled in
     QueryDef(
         key="student_courses",
         title="Courses for a Student",
         sql="""
-            SELECT c.id AS course_id, c.name AS course_name
-            FROM courses c
-            JOIN enrollments e ON c.id = e.course_id
-            WHERE e.student_id = %(student_id)s
-            ORDER BY c.name
+            SELECT course_id, batch_id
+            FROM enrollments
+            WHERE student_id = %(student_id)s
         """.strip(),
         params=[("student_id", "int")],
-        description="List all courses that a student is enrolled in.",
+        description="List course IDs and batch IDs for a student.",
+    ),
+    # Fee details (simple)
+    QueryDef(
+        key="student_fees",
+        title="Student Fees",
+        sql="""
+            SELECT course_id, fee_amount, paid_amount, due_amount
+            FROM payments
+            WHERE student_id = %(student_id)s
+        """.strip(),
+        params=[("student_id", "int")],
+        description="View fees for a student in each course.",
+    ),
+    # Attendance records
+    QueryDef(
+        key="student_attendance",
+        title="Attendance Records",
+        sql="""
+            SELECT course_id, batch_id, date, status
+            FROM attendance
+            WHERE student_id = %(student_id)s
+        """.strip(),
+        params=[("student_id", "int")],
+        description="View raw attendance records for a student.",
+    ),
+    # Exam results (simple)
+    QueryDef(
+        key="student_results",
+        title="Exam Results",
+        sql="""
+            SELECT course_id, marks, grade
+            FROM results
+            WHERE student_id = %(student_id)s
+        """.strip(),
+        params=[("student_id", "int")],
+        description="View exam results for a student.",
+    ),
+    # All courses
+    QueryDef(
+        key="all_courses",
+        title="All Courses",
+        sql="""
+            SELECT id, name, description
+            FROM courses
+            ORDER BY name
+        """.strip(),
+        description="List all courses.",
+    ),
+    # All batches
+    QueryDef(
+        key="all_batches",
+        title="All Batches",
+        sql="""
+            SELECT id, name
+            FROM batches
+            ORDER BY name
+        """.strip(),
+        description="List all batches.",
+    ),
+    # Students in a course
+    QueryDef(
+        key="students_by_course",
+        title="Students by Course",
+        sql="""
+            SELECT student_id
+            FROM enrollments
+            WHERE course_id = %(course_id)s
+        """.strip(),
+        params=[("course_id", "int")],
+        description="List student IDs enrolled in a given course.",
     ),
 ]
 
-
 def list_queries() -> List[Dict[str, Any]]:
     return [q.to_dict() for q in QUERIES]
-
 
 def get_query(key: str) -> Optional[QueryDef]:
     for q in QUERIES:

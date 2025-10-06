@@ -1,13 +1,22 @@
-// script.js
-// Externalized JS for the portal. Expecting backend on http://localhost:8000
 
 let studentSession = { id: null, name: null };
+let coursesData = [];
 
-/**
- * Utility: fetch JSON from backend with error handling
- * endpoint: path relative to http://localhost:8000 (or full url)
- * options: fetch options
- */
+function formatSQL(query) {
+    if (!query) return '';
+    return query
+        .replace(/\s+FROM\s+/gi, '\nFROM ')
+        .replace(/\s+JOIN\s+/gi, '\nJOIN ')
+        .replace(/\s+WHERE\s+/gi, '\nWHERE ')
+        .replace(/\s+GROUP BY\s+/gi, '\nGROUP BY ')
+        .replace(/\s+ORDER BY\s+/gi, '\nORDER BY ')
+        .replace(/\s+ON\s+/gi, '\n    ON ')
+        .replace(/\s+AND\s+/gi, '\n    AND ')
+        .replace(/\s+OR\s+/gi, '\n    OR ')
+        .trim();
+}
+
+
 async function fetchData(endpoint, options = {}) {
     const url = endpoint.startsWith('http') ? endpoint : `http://localhost:8000/${endpoint}`;
     try {
@@ -22,7 +31,6 @@ async function fetchData(endpoint, options = {}) {
         if (contentType.includes('application/json')) {
             return await res.json();
         } else {
-            // fallback - return plain text
             return { data: await res.text() };
         }
     } catch (err) {
@@ -63,6 +71,7 @@ function showLanding() {
     hideElement('studentLogin');
     hideElement('dashboardSection');
     hideElement('resultsSection');
+    hideElement('addStudentForm');
 }
 
 function backToRoleSelection() {
@@ -70,6 +79,7 @@ function backToRoleSelection() {
     hideElement('studentLogin');
     hideElement('dashboardSection');
     hideElement('resultsSection');
+    hideElement('addStudentForm');
 }
 
 function logoutRedirect() {
@@ -108,7 +118,6 @@ async function studentLogin() {
         return;
     }
 
-    // Call backend (matching your previous pattern)
     const resp = await fetchData(`students/${id}/login?password=${encodeURIComponent(pwd)}`);
     if (!resp || resp.error || !resp.id) {
         const m = resp && resp.message ? resp.message : 'Invalid credentials. Please check your ID and password.';
@@ -120,7 +129,6 @@ async function studentLogin() {
     studentSession.name = `${resp.first_name || ''} ${resp.last_name || ''}`.trim() || null;
     showMessage(msgDiv, `Welcome back, ${resp.first_name || 'Student'}`, 'success');
 
-    // Small delay so user sees welcome message
     setTimeout(() => {
         hideElement('studentLogin');
         showElement('dashboardSection');
@@ -130,38 +138,28 @@ async function studentLogin() {
 
 /**
  * Display query + table helper
- * rows => array of objects OR single object
  */
 function displayQueryAndTable(query, rows) {
     if (!rows) rows = [];
-    // normalize
-    if (!Array.isArray(rows)) {
-        rows = [rows];
-    }
-
-    // If there are no rows, still show query and a "no results" message
-    if (!rows.length) {
-        showElement('resultsSection');
-        document.getElementById('queryBox').innerText = query || '';
-        const tableHead = document.getElementById('tableHead');
-        const tableBody = document.getElementById('tableBody');
-        tableHead.innerHTML = '';
-        tableBody.innerHTML = `<tr><td>No records found.</td></tr>`;
-        return;
-    }
+    if (!Array.isArray(rows)) rows = [rows];
 
     showElement('resultsSection');
-    document.getElementById('queryBox').innerText = query || '';
+    document.getElementById('queryBox').innerText = formatSQL(query) || '';
+
 
     const tableHead = document.getElementById('tableHead');
     const tableBody = document.getElementById('tableBody');
     tableHead.innerHTML = '';
     tableBody.innerHTML = '';
 
+    if (!rows.length) {
+        tableBody.innerHTML = `<tr><td>No records found.</td></tr>`;
+        return;
+    }
+
     const headers = Object.keys(rows[0] || {});
     const trHead = document.createElement('tr');
     if (headers.length === 0) {
-        // Data is not plain objects (maybe a string)
         const th = document.createElement('th');
         th.innerText = 'Result';
         trHead.appendChild(th);
@@ -183,8 +181,7 @@ function displayQueryAndTable(query, rows) {
         } else {
             headers.forEach(h => {
                 const td = document.createElement('td');
-                const val = row[h];
-                td.innerText = val === null || val === undefined ? '' : String(val);
+                td.innerText = row[h] === null || row[h] === undefined ? '' : String(row[h]);
                 tr.appendChild(td);
             });
         }
@@ -234,15 +231,94 @@ async function viewEnrolledCourses() {
 /**
  * Teacher/admin actions
  */
-async function addStudent() {
-    const first = prompt("First name:"); if (!first) return;
-    const last = prompt("Last name:"); if (!last) return;
-    const email = prompt("Email:"); if (!email) return;
-    const age = prompt("Age:"); if (!age) return;
-    const params = new URLSearchParams({ first_name: first, last_name: last, email, age });
+async function showAddStudentForm() {
+    const coursesResp = await fetchData("courses_with_batches");
+    if (!coursesResp || !coursesResp.data) {
+        alert('Failed to load courses');
+        return;
+    }
+    
+    coursesData = coursesResp.data;
+    
+    const courseSelect = document.getElementById('studentCourse');
+    courseSelect.innerHTML = '<option value="">-- None --</option>';
+    
+    const courseMap = {};
+    coursesData.forEach(row => {
+        if (!courseMap[row.course_id]) {
+            courseMap[row.course_id] = {
+                id: row.course_id,
+                name: row.course_name,
+                batches: []
+            };
+        }
+        if (row.batch_id) {
+            courseMap[row.course_id].batches.push({
+                id: row.batch_id,
+                name: row.batch_name
+            });
+        }
+    });
+    
+    Object.values(courseMap).forEach(course => {
+        const opt = document.createElement('option');
+        opt.value = course.id;
+        opt.textContent = course.name;
+        courseSelect.appendChild(opt);
+    });
+    
+    window.courseMap = courseMap;
+    
+    hideElement('dashboardSection');
+    hideElement('resultsSection');
+    showElement('addStudentForm');
+}
+
+function onCourseChange() {
+    const courseId = document.getElementById('studentCourse').value;
+    const batchSelect = document.getElementById('studentBatch');
+    
+    batchSelect.innerHTML = '<option value="">-- None --</option>';
+    
+    if (courseId && window.courseMap && window.courseMap[courseId]) {
+        window.courseMap[courseId].batches.forEach(batch => {
+            const opt = document.createElement('option');
+            opt.value = batch.id;
+            opt.textContent = batch.name;
+            batchSelect.appendChild(opt);
+        });
+    }
+}
+
+function cancelAddStudent() {
+    hideElement('addStudentForm');
+    showElement('dashboardSection');
+    document.getElementById('addStudentFormElement').reset();
+}
+
+async function submitAddStudent() {
+    const firstName = document.getElementById('studentFirstName').value.trim();
+    const lastName = document.getElementById('studentLastName').value.trim();
+    const email = document.getElementById('studentEmail').value.trim();
+    const age = document.getElementById('studentAge').value.trim();
+    const password = document.getElementById('studentPassword').value.trim();
+    const courseId = document.getElementById('studentCourse').value;
+    const batchId = document.getElementById('studentBatch').value;
+    
+    if (!firstName || !lastName || !email || !age || !password) {
+        alert('Please fill in all required fields');
+        return;
+    }
+    
+    const params = new URLSearchParams({ first_name: firstName, last_name: lastName, email, age, password });
+    if (courseId) { params.append('course_id', courseId); if (batchId) params.append('batch_id', batchId); }
+    
     try {
         const res = await fetch(`http://localhost:8000/students?${params.toString()}`, { method: 'POST' });
         const data = await res.json();
+        if (data.error) { alert('Error creating student: ' + data.message); return; }
+        alert('Student created successfully!');
+        cancelAddStudent();
         displayQueryAndTable(data.query || 'INSERT INTO students ...', [data.data]);
     } catch (err) {
         console.error(err);
@@ -326,14 +402,13 @@ function showTeacherDashboard() {
     container.innerHTML = '';
 
     const buttons = [
-        { text: 'Add New Student', action: addStudent },
+        { text: 'Add New Student', action: showAddStudentForm },
         { text: 'View All Students', action: viewStudents },
         { text: 'Search Student', action: studentById },
         { text: 'View Batches', action: viewBatches },
         { text: 'View Courses', action: viewCourses },
         { text: 'Student Attendance', action: viewAttendanceTeacher },
         { text: 'Student Results', action: viewResultsTeacher },
-        
     ];
 
     buttons.forEach(b => {
@@ -352,3 +427,6 @@ window.selectRole = selectRole;
 window.backToRoleSelection = backToRoleSelection;
 window.logoutRedirect = logoutRedirect;
 window.studentLogin = studentLogin;
+window.onCourseChange = onCourseChange;
+window.cancelAddStudent = cancelAddStudent;
+window.submitAddStudent = submitAddStudent;

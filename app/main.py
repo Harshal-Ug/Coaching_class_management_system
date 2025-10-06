@@ -89,6 +89,24 @@ def student_profile(student_id: int):
         row = cur.fetchone()
     return {"query": sql.replace("%(sid)s", str(student_id)), "data": row}
 
+@app.get("/students/{student_id}/courses")
+def student_courses(student_id: int):
+    """Get all courses a student is enrolled in"""
+    sql = (
+        "SELECT c.id AS course_id, c.name AS course_name, c.description, "
+        "b.name AS batch_name "
+        "FROM enrollments e "
+        "JOIN courses c ON c.id = e.course_id "
+        "LEFT JOIN batches b ON b.id = e.batch_id "
+        "WHERE e.student_id = %(sid)s "
+        "ORDER BY c.name"
+    )
+    with get_connection() as conn:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(sql, {"sid": student_id})
+        rows = cur.fetchall()
+    return {"query": sql.replace("%(sid)s", str(student_id)), "data": rows}
+
 @app.get("/students/{student_id}/fees")
 def student_fees(student_id: int):
     sql = (
@@ -108,9 +126,14 @@ def student_fees(student_id: int):
 @app.get("/students/{student_id}/attendance")
 def student_attendance(student_id: int):
     sql = (
-        "SELECT c.name AS course, a.present_days, a.total_days, "
-        "ROUND(100*present_days/NULLIF(total_days,0),2) AS percent "
-        "FROM attendance a JOIN courses c ON c.id=a.course_id WHERE a.student_id=%(sid)s"
+        "SELECT c.name AS course, b.name AS batch, "
+        "COUNT(a.id) AS days_attended "
+        "FROM attendance a "
+        "JOIN batches b ON b.id = a.batch_id "
+        "JOIN courses c ON c.id = b.course_id "
+        "WHERE a.student_id = %(sid)s "
+        "GROUP BY c.id, c.name, b.id, b.name "
+        "ORDER BY c.name"
     )
     with get_connection() as conn:
         cur = conn.cursor(dictionary=True)
@@ -191,14 +214,42 @@ def students_per_course():
 # Add Student (Teacher)
 # -------------------------------
 @app.post("/students")
-def add_student(first_name: str, last_name: str, email: str, age: int):
-    sql = "INSERT INTO students (first_name,last_name,email,age,password_hash) VALUES (%s,%s,%s,%s,'123')"
+def add_student(first_name: str, last_name: str, email: str, age: int, password: str = "123", course_id: int = None, batch_id: int = None):
     with get_connection() as conn:
         cur = conn.cursor()
-        cur.execute(sql, (first_name, last_name, email, age))
+        # Insert student
+        sql_student = "INSERT INTO students (first_name,last_name,email,age,password_hash) VALUES (%s,%s,%s,%s,%s)"
+        cur.execute(sql_student, (first_name, last_name, email, age, password))
+        student_id = cur.lastrowid
+        
+        # If course is selected, enroll student
+        if course_id:
+            sql_enroll = "INSERT INTO enrollments (student_id, course_id, batch_id) VALUES (%s, %s, %s)"
+            cur.execute(sql_enroll, (student_id, course_id, batch_id))
+        
         conn.commit()
-    return {"query": sql, "data": {"created": True}}
+    
+    query_str = f"{sql_student}"
+    if course_id:
+        query_str += f"\n{sql_enroll}"
+    
+    return {"query": query_str, "data": {"created": True, "student_id": student_id}}
 
+
+@app.get("/courses_with_batches")
+def courses_with_batches():
+    sql = """
+        SELECT c.id AS course_id, c.name AS course_name,
+               b.id AS batch_id, b.name AS batch_name
+        FROM courses c
+        LEFT JOIN batches b ON b.course_id = c.id
+        ORDER BY c.name, b.name
+    """
+    with get_connection() as conn:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(sql)
+        rows = cur.fetchall()
+    return {"query": sql, "data": rows}
 # -------------------------------
 # NEW: Teacher view - Students with their Courses
 # -------------------------------
